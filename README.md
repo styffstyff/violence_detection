@@ -10,4 +10,4 @@ The detection is based on motion detection with background substraction.
 In order to track people I am using a kalman filter.  
 The algorithm is not able to detect dangereous behaviors yet.
 
-![alt text](detect.jpg)
+![alt text](Sample.png)
