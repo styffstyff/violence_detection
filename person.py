@@ -9,16 +9,15 @@ import matplotlib.pyplot as plt
 # les calculs
 
 class Person(object):
-    # TODO neckcenter     ✅
-    # TODO armOrientation ✅
-    # TODO headcenter     ✅
-    def __init__(self, box, frame):
+    def __init__(self, box, frame, mask=None):
         self.box = box
         self.frame = frame
+        self.mask = mask
         self.hBox = None
         self.headCenter= None
         self.neckCenter= None
         self.theta= None 
+        self.id = None
     
     def __str__(self):
         return f"""hBox:{self.hBox} \nheadCenter:{self.headCenter} \nneckCenter:{self.neckCenter} \ntheta:{self.theta} \n"""
@@ -32,56 +31,49 @@ class Person(object):
         boxList=self.hBox
         if nbBox == 3:
             x, y, w, h = self.box
+            cv2.putText(self.frame,f"id:{self.getId()}",(x,int(y+3*h)),cv2.FONT_HERSHEY_COMPLEX_SMALL, 0.5,(0, 255, 255), 1)
             cv2.rectangle(self.frame, (x, y), (x+w, y+h), (255, 0, 0), size)
         else:
             for box in boxList:
                 x, y, w, h = box
                 cv2.rectangle(self.frame, (x, y), (x+w, y+h), (0, 255, 0), size)
+            cv2.putText(self.frame,f"id:{self.getId()}",(x,y+h),cv2.FONT_HERSHEY_COMPLEX_SMALL, 0.5,(0, 255, 255), 1)
         return None
 
     def setHeadNeckAndArms(self):
         H1 = self.getHbox(0)
         x,y,w,h = H1
-        croppedFrame = self.frame[y:y+h, x:x+w]
-        hx,hy,hw,hh = x, y, w, int(h*0.65)
-        hCroppedFrame = self.frame[hy:hy+hh, hx:hx+hw]
-        xlen, ylen, _ =np.shape(croppedFrame)
+        if self.mask is None:
+            croppedFrame = self.frame[y:y+h, x:x+w]
+            croppedFrame2 = self.frame[y:y+(int(1.25*h)), x:x+w]
+            hx,hy,hw,hh = x, y, w, int(h*0.65)
+            hCroppedFrame = self.frame[hy:hy+hh, hx:hx+hw]
+            xlen, ylen, _ =np.shape(croppedFrame2)
+        else:
+            croppedFrame2 = self.mask[y:y+(int(1.25*h)), x:x+w]
+            hx,hy,hw,hh = x, y, w, int(h*0.65)
+            hCroppedFrame = self.mask[hy:hy+hh, hx:hx+hw]
+            xlen, ylen =np.shape(croppedFrame2)          
+        # On calcul la projection du nb de pixel sur y   
 
-        # On calcul la projection de y simultanément avec la mise 
-        # en place de Z qui contient la couleur du pixel et sa position
-        Z = []
         yprojection = np.zeros(ylen)
         color=0
         for idx in range(xlen):
             for idy in range(ylen):
-                if (croppedFrame[idx][idy] == np.array([255, 255, 255])).any():
+                if (croppedFrame2[idx][idy] == np.array([255, 255, 255])).any():
                     yprojection[idy]+=1
                     color = 1
                 else:
                     color = 0
-                # if  idx<hxlen and  idy<hylen:
-                #     Z.append((color, idx, idy))
-
-        # plt.plot(yprojection)
-        # plt.waitforbuttonpress()
-        # return None
-
 
         miny,maxy = None,None
         
         # CALCULS POUR LA TETE
-        imgray = cv2.cvtColor(hCroppedFrame, cv2.COLOR_BGR2GRAY)
-        contours,_= cv2.findContours(image = imgray, 
-                                     mode = cv2.RETR_EXTERNAL, 
-                                     method = cv2.CHAIN_APPROX_SIMPLE)
-        contours = sorted(contours, key = cv2.contourArea, reverse = True)
-        # On ne garde que le premier ordre de contour
-        c_0=contours[0]
-        # Calcul du moment 
-        M = cv2.moments(c_0)
-
-        lowerb = np.array([0, 0, 0], np.uint8)
-        upperb = np.array([255, 255, 255], np.uint8)
+        lowerb = np.array(0, np.uint8)
+        upperb = np.array(255, np.uint8)
+        # lowerb = np.array([0, 0, 0], np.uint8)
+        # upperb = np.array([255, 255, 255], np.uint8)
+        # print(hCroppedFrame)
         hFrame = cv2.inRange(hCroppedFrame, lowerb, upperb)
         blobs = hFrame > 100
         labels, nlabels = ndimage.label(blobs)
@@ -90,36 +82,16 @@ class Person(object):
         # calc sum of each label, this gives the number of pixels belonging to the blob
         s  =ndimage.sum(blobs, labels,  np.arange(nlabels) + 1 )
         cx, cy = t[s.argmax()]  # notation of output (y,x)
-        
-        # cx = int(M['m10'] / M['m00'])
-        # cy = int(M['m01'] / M['m00'])
-
         center0 = int(cx), int(cy)
-
-        # Version k-means -> peut etre l'effectuer 2 fois une fois sur les x et une fois sur les y ou trouver un couplage unique x,y
-        # Z = np.float32(Z)
-        # criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 10, 1.0)
-        # # On a seulement besoin de deux clusters 
-        # # pour notre kmean ie blanc et noir
-        # ret,label,center=cv2.kmeans(Z,1,None,criteria,10,cv2.KMEANS_RANDOM_CENTERS)
-        # center = np.uint8(center)
-        # center0 = center[0]
-        # for c in center:
-            # print(f"center:{c} ,  y : {hylen}, y : {hxlen} ")
-            
-            # if 0 <= c[2] <= hylen and 0 <= c[1] <= hxlen:             # On conserve le seul centre qui est sur la silhouette blanche
-            #     print(c)
-            #     cv2.circle(hCroppedFrame, (c[2],c[1]), 1, (0, 255, 0), 1)
-            #     cv2.imshow("cf", hCroppedFrame)
-            #     if (croppedFrame[c[1]][c[2]] !=  np.array([0, 0, 0])).any():
-            #         center0=c
         if center0 is not None:
-            cv2.circle(hCroppedFrame, (center0[1],center0[0]), 2, (0, 255, 0), 2)
+            cv2.circle(hCroppedFrame, (center0[1],center0[0]), 2, 100 , 2)
             cv2.imshow("cf", hCroppedFrame)
             
             self.headCenter = x+center0[1], y+center0[0]
-            cv2.circle(hCroppedFrame, (self.headCenter), 2, (0, 255, 0), 2)
+            cv2.circle(self.frame, (self.headCenter), 2, (0, 255, 0), 2)
             
+        if yprojection is None :
+            return None
         
         # CALCULS POUR LE COU
         if self.headCenter is not None:
@@ -130,23 +102,31 @@ class Person(object):
             neckCenter = x+np.argmax(yprojection), int(self.headCenter[1]*1.03)
             # neckCenter = 27,30
             nx, ny = neckCenter
-            print(nx, ny)
+
             cv2.circle(self.frame, (nx, ny), 2, (0,0,255), 2)
             self.neckCenter = neckCenter
         
         # CALCULS POUR L'ORIENTATION DES BRAS
         
         # déterminer de quel coté sont les bras
+        
         gauche, droit = np.split(yprojection, [np.argmax(yprojection)])
+        
+        # TODO mettre ca au propre c'est le bazar !
+        if len(gauche) == 0:
+            return None
+
+
         minDroit = np.argmin(droit)
         minGauche = len(gauche)-np.argmin(np.flip(gauche))
-        print(f"minG: {minGauche}, mind: {minDroit}")
+        # print(f"minG: {minGauche}, mind: {minDroit}")
         miny = minDroit if abs((np.argmax(yprojection)-minDroit)) > abs((np.argmax(yprojection)-minGauche)) else minGauche
         miny = minDroit + x + len(gauche)
-        miny2 = minGauche + x 
-        print(miny)
-        cv2.circle(self.frame, (miny2, y+h), 2, (255,0,255), 2)
-        cv2.line(self.frame, (miny, y+h) , self.neckCenter, (0, 0, 255), 3) 
+        y1 = self.getY(miny)
+        x2 = minGauche + x 
+        y2 = self.getY(x2)
+        cv2.circle(self.frame, (x2, y2), 2, (255,0,255), 2)
+        cv2.line(self.frame, (miny, y1) , self.neckCenter, (0, 0, 255), 3) 
         if miny is not None and self.neckCenter is not None:
             theta = 0
             x2,y2=self.neckCenter
@@ -154,56 +134,118 @@ class Person(object):
                 theta =  np.arctan(x2/(abs(y2-miny)))
             self.theta = theta
 
+    def setId(self, id):
+        self.id = id
+        return None
+    
+    def getBox(self):
+        return self.box
 
     def getHbox(self, n):
         assert (n >= 0 and n < 3), "il n y'a que 3 boites"
         return self.hBox[n]
+    
+    def getY(self, x):
+        H1=self.getHbox(0)
+        minY = H1[1]
+        maxY = minY+int(1.50*H1[3])
+        for y in range(minY, maxY):
+            if (self.frame[y][x] == np.array([255, 255, 255])).any() :
+                return y
+        return maxY
+    
+    def getId(self):
+        return self.id 
+    
+    def getMesure(self):
+        x, y = self.headCenter
+        w, h = tuple(self.box[2::])
+        return np.array([[x], [y], [w], [h]])
 
+
+class Track():
+    def __init__(self, box, dt):
+        self.box = box
+        self.dt = dt
+        x, y, w, h = box 
+        # Vecteur d'état
+        # x, y, w. h, vx, vy, ax, ay .. je devrais peut-etre ajouter la qté d'acc
+        self.state = np.matrix([[x],[y],[w],[h],[0],[0],[0],[0]])
+        # Matrice de transition
+        self.transition = np.matrix([   [1, 0, 0, 0, self.dt, 0,       0.5*(self.dt)**2, 0],
+                                        [0, 1, 0, 0, 0,       self.dt, 0,                0.5*(self.dt)**2],
+                                        [0, 0, 1, 0, 0,       0,       0,                0],
+                                        [0, 0, 0, 1, 0,       0,       0,                0],
+                                        [0, 0, 0, 0, 1,       0,       0,                0],
+                                        [0, 0, 0, 0, 0,       1,       0,                0],
+                                        [0, 0, 0, 0, 0,       0,       1,                0],
+                                        [0, 0, 0, 0, 0,       0,       0,                1]])
+        # Matrice d'observation
+        self.observation = np.matrix([[1, 0, 0, 0, 0, 0, 0, 0],
+                                      [0, 1, 0, 0, 0, 0, 0, 0],
+                                      [0, 0, 1, 0, 0, 0, 0, 0],
+                                      [0, 0, 0, 1, 0, 0, 0, 0]])
+
+        # Matrices de bruit (supposé gaussien):
+
+        # bruit relatif à l'évolution de l'objet
+        v=1E-5
+
+        self.objectNoise=np.matrix([[v, 0, 0, 0, 0, 0, 0, 0],
+                                    [0, v, 0, 0, 0, 0, 0, 0],
+                                    [0, 0, v, 0, 0, 0, 0, 0],
+                                    [0, 0, 0, v, 0, 0, 0, 0],
+                                    [0, 0, 0, 0, v, 0, 0, 0],
+                                    [0, 0, 0, 0, 0, v, 0, 0],
+                                    [0, 0, 0, 0, 0, 0, v, 0],
+                                    [0, 0, 0, 0, 0, 0, 0, v]
+                                    ])
+
+        # bruit relatif aux caractéristiques de la caméra
+        self.camNoise=np.matrix([[v, 0, 0, 0],
+                                [0, v, 0, 0],
+                                [0, 0, v, 0],
+                                [0, 0, 0, v]])
+        
+        # covariance de l'erreur de la prediction
+        self.P=np.matrix([[500, 0, 0, 0, 0, 0, 0, 0],
+                        [0, 500, 0, 0, 0, 0, 0, 0],
+                        [0, 0, 10, 0, 0, 0, 0, 0],
+                        [0, 0, 0, 10, 0, 0, 0, 0],
+                        [0, 0, 0, 0, 10000, 0, 0, 0],
+                        [0, 0, 0, 0, 0, 10000, 0, 0],
+                        [0, 0, 0, 0, 0, 0, 10000, 0],
+                        [0, 0, 0, 0, 0, 0, 0, 10000]
+                        ])
+        
+    def prediction(self):
+        self.state = np.dot(self.transition, self.state)
+
+        # calcul de la covariance de l'erreur
+        self.P=np.dot(np.dot(self.transition, self.P), self.transition.T)+self.objectNoise
+        return self.state
+    
+    def update(self, z):
+        # Calcul du gain de Kalman
+        S=np.dot(np.dot(self.observation, self.P), self.observation.T)+self.camNoise
+        K=np.dot(np.dot(self.P, self.observation.T), np.linalg.inv(S))
+        # Correction 
+        ecart = z - np.dot(self.observation, self.state)
+        self.state=np.round(self.state+np.dot(K, ecart))
+        I=np.eye(self.observation.shape[1])
+        self.P=(I-(K*self.observation))*self.P
+
+        return self.state
+    
+    def printing(self):
+        print(self.state)
 
 def divideBoundingBox(x, y, w, h):
     boxHeight = (h//3)
     boxes = ((x,y, w, boxHeight), (x,y+boxHeight, w, boxHeight), (x,y+(2*boxHeight), w, boxHeight))
     return boxes
 
-
-def minMaxProjection(projection):
-    """
-    inutile
-    """
-    assert 1==0 , "STOoooooOP"
-    def notNearPos(pos, dico):
-        for i in [-2, -1, 1, 2]:
-            if int(pos+i) in dico.keys():
-                return False
-        return True
-    
-    dx=1
-    y=projection
-
-    if sum(y) == 0:
-        return None, None
-
-    dy=np.gradient(y, dx)
-    d2y=np.gradient(dy, dx)
-    # On fait une approximation des zeros de la derivée en regardant quand elle change de signe
-    # sgn = 1 signe + sgm = 0 signe -
-    dyZeros = {}
-    sgn = 1 if dy[0] > 0 else 0
-    for val, pos in enumerate(dy):
-        if (sgn == 1 and val < 0) or (sgn == 0 and val > 0) and notNearPos(pos, dyZeros):
-            dyZeros[pos] = val
-        sgn = 1 if val > 0 else 0
-    # En isole deux extremum:
-    minY = y[0],0              # Initialisation a améliorer peut-etre
-    maxY = y[0],0
-    for pos,val in dyZeros.items():
-        pos=int(pos) # Vraiment ????
-        if d2y[pos] < 0 and y[pos] > maxY[0]:
-            maxY = y[pos],pos
-        elif d2y[pos] >= 0 and y[pos] < minY[0]:
-            minY = y[pos],pos
-    
-    return int(minY[0]),int(maxY[0])
-
 if __name__ == "__main__":
-    minMaxProjection([])
+    obj = Track((1, 34, 2, 5), 0.1)
+    obj.prediction()
+    obj.printing()
