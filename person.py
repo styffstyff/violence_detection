@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 # Plus simplement à toutes les caractéristiques nécessaire et minimiser 
 # les calculs
 
-class Person(object):
+class Person():
     def __init__(self, box, frame, mask=None):
         self.box = box
         self.frame = frame
