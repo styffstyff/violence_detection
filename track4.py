@@ -2,6 +2,12 @@ import person
 import numpy as np
 import matplotlib.pyplot as plt
 import cv2
+import time
+from numpy import genfromtxt
+import math
+import os
+import glob
+import yolov5_master.detector as DETECT
 
 def aspectRatioBox(boxList):
     # ratio hauteur largeur des boites
@@ -12,192 +18,204 @@ def aspectRatioBox(boxList):
             ratioBoxList.append((x,y,w,h))
     return ratioBoxList
 
-def closest_person(p,personDict, keys=False ,minDist=100):
-    """ 
-    Prend un objet person p et une liste d'objets person personDict et renvoie 
-    la personne la plus proche de p dans personDict avec une "sécurité" l'option
-    minDist qui s'assure que si aucune des personnes n'est vraiment proche de p
-    cette fonction ne renvoit rien 
-    TODO modifier cette fonction pour utiliser la prédiction du filtre de Kalman
+def closest_person(predictionDict, personDict, minDist=120):
     """
-    def rmse(mesure, prediction): 
-        # Root mean squared error
-        return np.sqrt(np.mean((mesure-prediction)**2))
-
-    def distance(p1, p2):
-        x1, y1, x2, y2 = *p1, *p2
-        return np.sqrt((x1-x2)**2+(y1-y2)**2)
+    prediction: vecteur d'etat prédit d'une personne
+    pDict: dictionnaire des personnes détectées 
+    """
     
-    currentClosest = None
-    if keys is False:
-        for person in personDict.values():
+    pDict={}
 
-            if person.headCenter is not None:
-                dist = distance(person.headCenter, p.headCenter)
-                if dist < minDist:
-                    minDist = dist
-                    currentClosest = person
-    else:
-        for person in personDict.keys():
-            if person.headCenter is not None:
-                dist = distance(person.headCenter, p.headCenter)
-                if dist < minDist:
-                    minDist = dist
-                    currentClosest = person
+    def distance(p1, listePoint):
+        distances = []
 
-    return currentClosest
+        for p2 in listePoint:
+            x1, y1, x2, y2 = *p1, *p2
+            distances.append(np.sqrt((x1-x2)**2+(y1-y2)**2))
+            
+        return distances
+
+    predictionId = []
+    predictionList = []
+
+    for i, prediction in predictionDict.items():
+        predictionId.append(i)
+        predictionList.append((int(prediction[0][0]), int(prediction[1][0])))
+
+    tabPerson= []
+    tabDist= []
+
+    for p in personDict.keys():
+        dist = distance(p.headCenter, predictionList)
+        tabDist.append(dist)
+        tabPerson.append(p)
+
+    predictionId = np.array(predictionId)
+    tabPerson = np.array(tabPerson)
+    tabDist = np.array(tabDist)
+    sortedDist = np.sort(tabDist, axis=None)
+
+    for i, d in enumerate(sortedDist):
+        if d>minDist:
+            break
+            
+        id1, id2 = np.where(tabDist==d)
+
+        if not len(id1) or not len(id2):
+            continue
+        
+        # pour eviter de faire des calculs inutiles
+        tabDist[id1, :]=minDist+1
+        tabDist[:, id2]=minDist+1
+        
+        if len(predictionId)<1:
+            continue
+        else:
+            for i, pid in enumerate(predictionId[id2]):
+                pDict[int(pid)]=tabPerson[id1][i]
+        
+    return pDict
+
+
+        
 
 
 
-import cv2
-import numpy as np
-from numpy import genfromtxt
-import math
-import os
-import glob
-
+# methode de soustraction d'arrière plan
 backSub = cv2.createBackgroundSubtractorKNN(dist2Threshold=760, detectShadows=False)
 
 
-# cap=cv2.VideoCapture(0)
-# surface = 30000
-# cap=cv2.VideoCapture("Fight_OneManDown.mpg")
-cap=cv2.VideoCapture("Pedestrian.mp4")
+
+cap=cv2.VideoCapture("Pedestrian.mp4") # 7 FPS
+
 surface = 500
 personDict={} # clé: id de person valeur: info de person associés à id
 kFilterDict={} # clé: id de person valeur: filtre de kalman
 predictionDict={} # clé: id de person valeur: (prediction de Kalman, Estimation de l'erreur)
+compteur={}
 idP = 0
-dt = 0.26 # devrait etre calculé en temps réel
+idimg = 0
+dt = 0.142
+#dt = 0.26 # devrait etre calculé en temps réel
 
 while True:
+    predit=[]
     currentPersonDict={}
+
     
     ret, frame = cap.read()
+    cv2.imwrite(f'./images/test1{idimg}.jpg', frame)
+    boxes = DETECT.run(source=f'./images/test1{idimg}.jpg', classes=0, view_img=False, nosave=True , device="cpu")
 
-    #Detection de l'objet
     if frame is None:
         break
-    frame = cv2.GaussianBlur(frame, (1, 5), 2)
-    fgMask = backSub.apply(frame)
-    fgMask = cv2.threshold(fgMask, 200, 255, cv2.THRESH_BINARY)[1]
-    frame_contour=frame.copy()
-    contours, nada=cv2.findContours(fgMask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-    # Première boucle pour initaliser toutes les détections
-    for c in contours:
-        #On dessine les contours c
-        #plus petit rectangle qui englobe le contour
-        if cv2.contourArea(c)<surface or cv2.contourArea(c)>surface*4 :
-             continue
-        rect = cv2.minAreaRect(c)
-        box = cv2.boundingRect(c)
-        box = aspectRatioBox([box])
-        if box:
-            x,y,w,h=box[0]
-            cv2.rectangle(frame_contour, (x, y), (x+w, y+h), (0, 0, 255), 6)
-            detected = person.Person(box[0], frame, fgMask)
+    fgMask = backSub.apply(frame)
+
+    fgMask = cv2.threshold(fgMask, 200, 255, cv2.THRESH_BINARY)[1]
+    
+    for box in boxes:
+
+        if len(box) > 0:
+            x,y,w,h = box.astype(int)
+            detected = person.Person((x, y, w, h), frame, fgMask)
             detected.setHBox()
             detected.setHeadNeckAndArms()
-            #detected.displayBox(nbBox=0)
             currentPersonDict[detected]=True
 
-    # Trois configurations pour mettre a jour les personnes présentes
-    
+    # On fait les prédictions:
+    for i, kf in kFilterDict.items():
+        kFilterDict[i].prediction() # on fait la prediction du filtre
+        predict = kf.prediction() # on récupère la prédiction
+        predictionDict[i] = predict # on ajoute la prédiction au dictionnaire
+        px, py = int(predict[0][0]), int(predict[1][0]) 
+        cv2.arrowedLine(frame, (px,py), (px+int(predict[4]), py + int(predict[5])), (25,50,100), 2)
+
+    # On ajoute les premières personnes détectées 
     if len(personDict) == 0 and len(currentPersonDict) != 0:
         for p in currentPersonDict.keys():
             p.setId(idP)
+            personDict[idP] = p
+            kFilterDict[idP] = person.Track(p.getBox(), dt, p.headCenter)
             idP += 1
-            personDict[p.getId()] = p
-            kFilterDict[p.getId()] = person.Track(p.getBox(), dt)
-            predictionDict[p.getId()] = (kFilterDict[p.getId()].prediction(),-1)
-
-            predict=kFilterDict[p.getId()].prediction()
-            px, py = int(predict[0][0]), int(predict[1][0])
-            cv2.circle(frame, (px,py), 3, (255, 0, 254), 3)
-            cv2.arrowedLine(frame, (px,py), (px+int(predict[4]), py + int(predict[5])), (255,0,0), 2)
-
-    elif len(personDict) <= len(currentPersonDict):
-        for p in currentPersonDict.keys():
-            #
-            # TODO choisir entre la méthode du plus prés ou du plus prés avec la prédiction de Kalman
-            #
-            precP = closest_person(p, personDict)
-            if precP is not None:
-                personDict.pop(precP.getId())
-                p.setId(precP.getId())
-                personDict[precP.getId()] = p
-                predictionDict[p.getId()] = (kFilterDict[p.getId()].prediction(),-1) # -1 valeur d'essai je n'ai pas encore calculé l'erreur
-                
-                predict=kFilterDict[p.getId()].prediction()
-                print(predict)
-                px, py = int(predict[0][0]),int(predict[1][0])
-                cv2.circle(frame, (px,py), 3, (255, 0, 254), 3)
-                cv2.arrowedLine(frame, (px,py), (px+int(predict[4]), py + int(predict[5])), (255,0,0), 2)
-
-                kFilterDict[p.getId()].update(p.getMesure())
-            else:
-                p.setId(idP)
-                personDict[idP] = p
-                kFilterDict[p.getId()]=person.Track(p.getBox(), dt)
-                predict = predictionDict[p.getId()] = (kFilterDict[p.getId()].prediction(),-1)
-                
-                predict=kFilterDict[p.getId()].prediction()
-                print(predict)
-                px, py = int(predict[0][0]),int(predict[1][0])
-                print(px,py)
-                cv2.circle(frame, (px, py), 3, (255, 0, 254), 3)
-                cv2.arrowedLine(frame, (px,py), (px+int(predict[4]), py + int(predict[5])), (255,0,0), 2)
-                kFilterDict[p.getId()].update(p.getMesure())
-                idP+=1
+            
+    
     else:
-        present={}
-        notPresent=[]
-        for p in personDict.values():
-            # TODO idem cas 2
-            nextP = closest_person(p, currentPersonDict, keys=True)
-            
-            if nextP is not None:
-                currentPersonDict.pop(nextP)
-                nextP.setId(p.getId())
-                personDict[p.getId()] = nextP
-                present[p.getId()] = True  
-                predict = predictionDict[p.getId()] = (kFilterDict[p.getId()].prediction(),-1)  
-                
-                predict=kFilterDict[p.getId()].prediction()
-                px, py = int(predict[0][0]),int(predict[1][0])
-                print(predict)
-                cv2.circle(frame, (px,py), 3, (255, 0, 254), 3)
-                cv2.arrowedLine(frame, (px,py), (px+int(predict[4]), py + int(predict[5])), (255,0,0), 2)
+        # on récupère un dictionnaire qui donne toute les personnes détectée qui étaient présentes avant 
+        nextPdict = closest_person(predictionDict, currentPersonDict)
 
-                kFilterDict[p.getId()].update(p.getMesure()) 
+        # AFFICHAGE DE DEBUGAGE
+        # print(f" \n les détectés à l'image d'avant: { { i: p.headCenter for i,p in personDict.items()} } ")
+        # print(f" \n les associables : {[ p.headCenter for p in list(currentPersonDict.keys())]} " )
+        # print(f" \n les associés :  { {i: p.headCenter for i,p in nextPdict.items()} } ")
+        # print(f" \n les prédictions : { {i: d[0:2] for i,d in predictionDict.items()} } ")
+        
+        # usr = None
+        # while usr is None:
+        #     usr = str(input("OK?"))
 
-            if p.getId() not in present.keys():
-                notPresent.append(p.getId())
-        for idNP in notPresent:
-            kFilterDict.pop(idNP)
-            personDict.pop(idNP)
-
-    for p in personDict.values():
-        break
-        p.displayBox(nbBox=0)
+        # On met à jour toute les personnes qui ont été de nouveau détectée
+        for i, p in nextPdict.items():
+            compteur[i] = 0
+            predictionDict.pop(i)
+            if p in list(currentPersonDict.keys()):
+                # on retire la personne des personnes détectées puis on met à jour le dico des personnes
+                currentPersonDict.pop(p)
+                p.setId(i)
+                personDict[i] = p 
+                kFilterDict[i].update(p.getMesure())
+            else:
+                print("error ")
 
 
+        # On traite les personnes non détectées
+        for p in currentPersonDict:
+            p.setId(idP)
+            personDict[idP] = p 
+            kFilterDict[idP] = person.Track(p.getBox(), dt, p.headCenter)
+            idP += 1
     
-    for i, kf in kFilterDict.items():
-        break
-        print((int(kf.state[0][0]), int(kf.state[1][0])))
-        cv2.circle(frame, (int(kf.state[0][0]), int(kf.state[1][0])), 3, (255, 0, 254), 3)
+        for i, prediction in predictionDict.items():
+            if i in list(compteur.keys()):
+                compteur[i] += 1
+            else:
+                compteur[i] = 1
             
-    
+
+            hx, hy, w, h = tuple( int(param) for param in prediction[:4:])
+            previousBox = personDict[i].getBox()
+            if personDict[i].headCenter is None:
+                continue
+            dx, dy = tuple( np.array(personDict[i].headCenter) - np.array([hx, hy]))
+            x, y = previousBox[0]-dx, previousBox[1]-dy
+            
+            predicted = person.Person((x, y, w, h), frame, fgMask)
+            predicted.setHBox()
+            predicted.setHeadNeckAndArms()
+            predicted.setId(i)
+            kFilterDict[i].update(np.array([[hx], [hy], [w], [h]]))
+            personDict[i] = predicted
+                  
+    for i, nb in compteur.items():
+        if nb > 10:
+            if i in list(kFilterDict.keys()):
+                predictionDict.pop(i)
+                kFilterDict.pop(i)
+
+   
+    for i, p in personDict.items():
+        p.displayBox(color = (23, 255, 0), nbBox=0)
+
     cv2.imshow('FG Mask', fgMask)
-    # cv2.imwrite(f'./Image_sample/test{id}.jpg', fgMask)
-    cv2.imshow('frame contour', frame_contour)
     cv2.imshow("frame", frame)
+    
+    idimg += 1
     key=cv2.waitKey(70)&0xFF
     if key==ord('r'):
-        rectangle=not rectangle
+        rectangle = not rectangle
     if key==ord('t'):
-        trace=not trace
+        trace = not trace
     if key==ord('q'):
         quit()
+    
+
