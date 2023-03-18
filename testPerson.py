@@ -2,7 +2,7 @@ import cv2
 import person
 import matplotlib.pyplot as plt
 
-img = cv2.imread("Image_sample/test613.jpg")
+img = cv2.imread("test613.jpg")
 
 for i in range(8):
     # r = cv2.selectROI("select the area", img)
