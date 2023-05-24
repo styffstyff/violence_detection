@@ -133,14 +133,14 @@ def closest_person(predictionDict, personDict, minDist=120):
 # backSub = cv2.createBackgroundSubtractorKNN(dist2Threshold=760, detectShadows=False)
 # backSub = cv2.createBackgroundSubtractorKNN(dist2Threshold=1500, detectShadows=False)
 
-model_path = "./YOLOv5_Segmentation/models/yolov5s-seg.onnx"
-yoloseg = YOLOSeg(model_path, conf_thres=0.3, iou_thres=0.3)
+model_path = "./models/yolov5s-seg.onnx"
+yoloseg = YOLOSeg.YOLOSeg(model_path, conf_thres=0.3, iou_thres=0.3)
 
-filename = "test1_SimpleMouvements" # Nom du fichier json
+filename = "test2" # Nom du fichier json
 jsonData = {}
 
 # cap=cv2.VideoCapture(0)
-cap =cv2.VideoCapture("./DATA/video/mouvement_simple.mkv")
+# cap =cv2.VideoCapture("./DATA/video/mouvement_simple.mkv")
 # surface = 10000
 # cap=cv2.VideoCapture("Fight_OneManDown.mpg")
 # cap=cv2.VideoCapture("Pedestrian.mp4") # 7 FPS
@@ -289,7 +289,7 @@ while True:
 
 
 
-filepath = "./DATA/JSON/test1_SimpleMouvements.json"
+filepath = "./DATA/JSON/test2.json"
 
 with open(filepath, "w") as f:
     json.dump(jsonData, f)
